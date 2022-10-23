@@ -1,0 +1,37 @@
+{
+   "name": "pgfaceting",
+   "abstract": "Quickly calculate facet counts using inverted index built with roaring bitmaps.",
+   "description": "",
+   "version": "0.1.0",
+   "maintainer": [
+      "Ants Aasma <ants@cybertec.at>"
+   ],
+   "license": "bsd",
+   "prereqs": {
+      "runtime": {
+         "requires": {
+            "PostgreSQL": "11.0"
+         }
+      }
+   },
+   "provides": {
+     "pgfaceting": {
+       "file": "sql/pgfaceting--0.1.0.sql",
+       "docfile" : "README.md",
+       "version": "0.1.0"
+     }
+   },
+   "resources": {
+      "repository": {
+        "url":  "https://github.com/cybertec-postgresql/pgfaceting.git",
+        "web":  "https://github.com/cybertec-postgresql/pgfaceting",
+        "type": "git"
+      }
+   },
+   "tags" : ["count", "aggregate", "performance", "bitmap"],
+   "meta-spec": {
+      "version": "1.0.0",
+      "url": "http://pgxn.org/meta/spec.txt"
+   },
+   "release_status" : "unstable"
+}

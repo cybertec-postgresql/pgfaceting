@@ -1,0 +1,139 @@
+CREATE EXTENSION roaringbitmap;
+CREATE EXTENSION pgfaceting;
+CREATE SCHEMA facetingtestsuite;
+CREATE TYPE facetingtestsuite.mimetype AS ENUM (
+   'application/pdf',
+    'text/html',
+    'image/jpeg',
+    'image/png',
+    'application/msword',
+    'text/csv',
+    'application/zip',
+    'application/vnd.ms-powerpoint'
+    );
+CREATE TABLE facetingtestsuite.documents (
+    id int8 primary key,
+    created timestamptz not null,
+    finished timestamptz,
+    category_id int8 not null,
+    tags text[],
+    type facetingtestsuite.mimetype,
+    size int8,
+    title text
+);
+COPY facetingtestsuite.documents (id, created, finished, category_id, tags, type, size, title) FROM stdin;
+SELECT faceting.add_faceting_to_table('facetingtestsuite.documents',
+        key => 'id',
+        facets => array[
+            faceting.datetrunc_facet('created', 'month'),
+            faceting.datetrunc_facet('finished', 'month'),
+            faceting.plain_facet('category_id'),
+            faceting.plain_facet('type'),
+            faceting.bucket_facet('size', buckets => array[0,1000,5000,10000,50000,100000,500000])
+        ],
+        populate => false
+    );
+ add_faceting_to_table 
+-----------------------
+ 
+(1 row)
+
+SELECT faceting.populate_facets('facetingtestsuite.documents'::regclass);
+ populate_facets 
+-----------------
+ 
+(1 row)
+
+SELECT * FROM faceting.top_values('facetingtestsuite.documents'::regclass);
+ facet_name  |         facet_value          | cardinality 
+-------------+------------------------------+-------------
+ created     | Tue Dec 01 00:00:00 2009 PST |          10
+ finished    | Fri Jan 01 00:00:00 2010 PST |           6
+ finished    | Tue Dec 01 00:00:00 2009 PST |           4
+ category_id | 24                           |           5
+ category_id | 9                            |           2
+ category_id | 8                            |           2
+ category_id | 12                           |           1
+ type        | application/pdf              |           5
+ type        | text/html                    |           3
+ type        | image/jpeg                   |           2
+ size        | 6                            |           7
+ size        | 7                            |           2
+ size        | 5                            |           1
+(13 rows)
+
+COPY facetingtestsuite.documents (id, created, finished, category_id, tags, type, size, title) FROM stdin;
+SELECT faceting.merge_deltas('facetingtestsuite.documents'::regclass);
+ merge_deltas 
+--------------
+ 
+(1 row)
+
+SELECT * FROM faceting.top_values('facetingtestsuite.documents'::regclass);
+ facet_name  |         facet_value          | cardinality 
+-------------+------------------------------+-------------
+ created     | Tue Dec 01 00:00:00 2009 PST |          20
+ finished    | Fri Jan 01 00:00:00 2010 PST |          15
+ finished    | Tue Dec 01 00:00:00 2009 PST |           5
+ category_id | 24                           |          13
+ category_id | 9                            |           4
+ category_id | 8                            |           2
+ category_id | 12                           |           1
+ type        | application/pdf              |          10
+ type        | image/jpeg                   |           3
+ type        | text/html                    |           3
+ type        | image/png                    |           3
+ type        | text/csv                     |           1
+ size        | 6                            |          14
+ size        | 7                            |           4
+ size        | 4                            |           1
+ size        | 5                            |           1
+(16 rows)
+
+(SELECT 'created' AS facet_name, date_trunc('month', created)::text AS facet_value, COUNT(*) AS cardinality FROM facetingtestsuite.documents GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 5)
+    UNION ALL
+(SELECT 'finished', date_trunc('month', finished)::text, COUNT(*) FROM facetingtestsuite.documents GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 5)
+    UNION ALL
+(SELECT 'category_id', category_id::text, COUNT(*) FROM facetingtestsuite.documents GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 5)
+    UNION ALL
+(SELECT 'type', type::text, COUNT(*) FROM facetingtestsuite.documents GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 5)
+    UNION ALL
+(SELECT 'size', width_bucket(size, array[0,1000,5000,10000,50000,100000,500000])::text, COUNT(*) FROM facetingtestsuite.documents GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 5);
+ facet_name  |         facet_value          | cardinality 
+-------------+------------------------------+-------------
+ created     | Tue Dec 01 00:00:00 2009 PST |          20
+ finished    | Fri Jan 01 00:00:00 2010 PST |          15
+ finished    | Tue Dec 01 00:00:00 2009 PST |           5
+ category_id | 24                           |          13
+ category_id | 9                            |           4
+ category_id | 8                            |           2
+ category_id | 12                           |           1
+ type        | application/pdf              |          10
+ type        | image/png                    |           3
+ type        | image/jpeg                   |           3
+ type        | text/html                    |           3
+ type        | text/csv                     |           1
+ size        | 6                            |          14
+ size        | 7                            |           4
+ size        | 4                            |           1
+ size        | 5                            |           1
+(16 rows)
+
+SELECT * FROM faceting.count_results('facetingtestsuite.documents'::regclass,
+                                     filters => array[row('category_id', 24)]::faceting.facet_filter[]);
+ facet_name |         facet_value          | cardinality 
+------------+------------------------------+-------------
+ created    | Tue Dec 01 00:00:00 2009 PST |          13
+ finished   | Fri Jan 01 00:00:00 2010 PST |          11
+ finished   | Tue Dec 01 00:00:00 2009 PST |           2
+ type       | application/pdf              |           6
+ type       | image/jpeg                   |           3
+ type       | text/html                    |           2
+ type       | text/csv                     |           1
+ type       | image/png                    |           1
+ size       | 6                            |          10
+ size       | 7                            |           2
+ size       | 4                            |           1
+ size       | 5                            |           0
+(12 rows)
+

@@ -1,0 +1,7 @@
+# faceting extension
+comment = 'fast faceting queries using an inverted index'
+default_version = '0.1.0'
+relocatable = false
+schema = 'faceting'
+requires = 'roaringbitmap'
+superuser = false
