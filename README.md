@@ -75,3 +75,20 @@ For advanced usage the inverted index tables can be accessed directly.
     FROM lookup flt JOIN documents_facets USING (chunk_id)
     GROUP BY 1, 2;
 
+### How fast is it
+
+Calculating facets for 61% of rows in 100M row table: 
+
+    postgres=# SELECT facet_name, count(distinct facet_value), sum(cardinality)
+    postgres-# FROM faceting.count_results('documents'::regclass,
+    postgres-#     filters => array[row('category_id', 24)]::faceting.facet_filter[])
+    postgres-# GROUP BY 1;
+     facet_name | count |   sum    
+    ------------+-------+----------
+     created    |   154 | 60812252
+     finished   |   154 | 60812252
+     size       |     7 | 60812252
+     type       |     8 | 60812252
+    (4 rows)
+    
+    Time: 164.712 ms
