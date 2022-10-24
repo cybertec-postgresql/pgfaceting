@@ -4,6 +4,10 @@ PostgreSQL extension to quickly calculate facet counts using inverted index buil
 [roaring bitmaps](https://roaringbitmap.org/). Requires
 [pg_roaringbitmap](https://github.com/ChenHuajun/pg_roaringbitmap) to be installed.
 
+Faceting means counting number occurrences of each value in a result set for a set of attributes. Typical example of
+faceting is be a web shop where you can see how many items are remaining after filtering your search by red, green or
+blue, and how many when filtering by size small, medium or large.
+
 ## Build and install
 
     make install
@@ -79,10 +83,18 @@ For advanced usage the inverted index tables can be accessed directly.
 
 Calculating facets for 61% of rows in 100M row table: 
 
+    -- 24 vcore parallel seq scan
     postgres=# SELECT facet_name, count(distinct facet_value), sum(cardinality)
-    postgres-# FROM faceting.count_results('documents'::regclass,
-    postgres-#     filters => array[row('category_id', 24)]::faceting.facet_filter[])
-    postgres-# GROUP BY 1;
+    FROM (SELECT facet_name, facet_value, COUNT(*) cardinality
+          FROM test2.documents d, LATERAL (VALUES
+                ('created', date_trunc('month', created)::text),
+                ('finished', date_trunc('month', finished)::text),
+                ('type', type::text),
+                ('size', width_bucket(size, array[0,1000,5000,10000,50000,100000,500000])::text)
+              ) t(facet_name, facet_value)
+          WHERE category_id = 24
+          GROUP BY 1, 2) count_results
+    GROUP BY 1;
      facet_name | count |   sum    
     ------------+-------+----------
      created    |   154 | 60812252
@@ -91,4 +103,44 @@ Calculating facets for 61% of rows in 100M row table:
      type       |     8 | 60812252
     (4 rows)
     
-    Time: 164.712 ms
+    Time: 18440.061 ms (00:18.440)
+    
+    -- Single core only
+    postgres=# SET max_parallel_workers_per_gather = 0;
+    SET
+    Time: 0.206 ms
+    postgres=# SELECT facet_name, count(distinct facet_value), sum(cardinality)
+    FROM (SELECT facet_name, facet_value, COUNT(*) cardinality
+          FROM test2.documents d, LATERAL (VALUES
+                ('created', date_trunc('month', created)::text),
+                ('finished', date_trunc('month', finished)::text),
+                ('type', type::text),
+                ('size', width_bucket(size, array[0,1000,5000,10000,50000,100000,500000])::text)
+              ) t(facet_name, facet_value)
+          WHERE category_id = 24
+          GROUP BY 1, 2) count_results
+    GROUP BY 1;
+     facet_name | count |   sum    
+    ------------+-------+----------
+     created    |   154 | 60812252
+     finished   |   154 | 60812252
+     size       |     7 | 60812252
+     type       |     8 | 60812252
+    (4 rows)
+    
+    Time: 222019.758 ms (03:42.020)
+    
+    -- Using facets index
+    postgres=# SELECT facet_name, count(distinct facet_value), sum(cardinality)
+    FROM faceting.count_results('documents'::regclass,
+        filters => array[row('category_id', 24)]::faceting.facet_filter[])
+    GROUP BY 1;
+     facet_name | count |   sum    
+    ------------+-------+----------
+     created    |   154 | 60812252
+     finished   |   154 | 60812252
+     size       |     7 | 60812252
+     type       |     8 | 60812252
+    (4 rows)
+    
+     Time: 155.228 ms
