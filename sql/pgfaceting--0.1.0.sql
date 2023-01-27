@@ -441,7 +441,7 @@ BEGIN
 				RAISE NOTICE 'Starting facets maintenance of %', tdef.tablename;
 			END IF;
 			start_ts := clock_timestamp();
-			PERFORM faceting.merge_deltas();
+			PERFORM faceting.merge_deltas(tdef.table_id);
 			COMMIT;
 			end_ts := clock_timestamp();
 			IF debug THEN
