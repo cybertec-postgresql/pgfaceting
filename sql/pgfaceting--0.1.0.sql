@@ -438,14 +438,14 @@ DECLARE
 BEGIN
 		FOR tdef IN SELECT * FROM faceting.faceted_table LOOP
 			IF debug THEN
-				RAISE NOTICE 'Starting facets maintenance of %', tdef.table_name;
+				RAISE NOTICE 'Starting facets maintenance of %', tdef.tablename;
 			END IF;
 			start_ts := clock_timestamp();
-			PERFORM faceting.merge_deltas();
+			PERFORM faceting.merge_deltas(tdef.table_id);
 			COMMIT;
 			end_ts := clock_timestamp();
 			IF debug THEN
-				RAISE NOTICE 'End facets maintenance of %, duration: %s', tdef.table_name, end_ts - start_ts;
+				RAISE NOTICE 'End facets maintenance of %, duration: %s', tdef.tablename, end_ts - start_ts;
 			END IF;
 		END LOOP;
 END;
