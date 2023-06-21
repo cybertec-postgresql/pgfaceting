@@ -84,3 +84,9 @@ SELECT * FROM faceting.top_values('facetingtestsuite.documents'::regclass);
 
 SELECT * FROM faceting.count_results('facetingtestsuite.documents'::regclass,
                                      filters => array[row('category_id', 24)]::faceting.facet_filter[]);
+
+DELETE FROM facetingtestsuite.documents WHERE 'red' = ANY (tags);
+
+SELECT faceting.merge_deltas('facetingtestsuite.documents'::regclass);
+
+SELECT * FROM faceting.top_values('facetingtestsuite.documents'::regclass, facets=>array['tags', 'type']);

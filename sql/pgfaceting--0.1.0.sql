@@ -380,16 +380,21 @@ CREATE TYPE faceting.facet_counts AS (
     cardinality int8
 );
 
-CREATE FUNCTION faceting.top_values(p_table_id oid, n int = 5)
+CREATE FUNCTION faceting.top_values(p_table_id oid, n int = 5, facets text[] = null)
     RETURNS SETOF faceting.facet_counts
     LANGUAGE plpgsql
 AS $$
 DECLARE
     tdef faceting.faceted_table;
+    facet_filter text = '';
 BEGIN
     SELECT t.* INTO tdef FROM faceting.faceted_table t WHERE t.table_id = p_table_id;
     IF tdef.table_id IS NULL THEN
         RAISE EXCEPTION 'Table % not found', p_table_id;
+    END IF;
+    IF facets IS NOT NULL THEN
+        SELECT format('WHERE facet_id = ANY (''%s'')', array_agg(facet_id)::text) INTO facet_filter
+            FROM faceting.facet_definition fd WHERE fd.facet_name = ANY (facets);
     END IF;
 
     RETURN QUERY EXECUTE format($sql$
@@ -398,12 +403,16 @@ BEGIN
             FROM (
                 SELECT facet_id, facet_value, sum(rb_cardinality(postinglist))
                 FROM %s
+                %s
                 GROUP BY 1, 2
                 ) x
             ) counts JOIN faceting.facet_definition fd USING (facet_id)
         WHERE rank <= 5 AND table_id = $1
         ORDER BY facet_id, rank, facet_value;
-    $sql$, faceting._qualified(tdef.schemaname, tdef.facets_table)) USING p_table_id;
+    $sql$,
+        faceting._qualified(tdef.schemaname, tdef.facets_table),
+        facet_filter)
+    USING p_table_id;
 END;
 $$;
 

@@ -185,3 +185,27 @@ SELECT * FROM faceting.count_results('facetingtestsuite.documents'::regclass,
  size       | 5                            |           0
 (49 rows)
 
+DELETE FROM facetingtestsuite.documents WHERE 'red' = ANY (tags);
+SELECT faceting.merge_deltas('facetingtestsuite.documents'::regclass);
+ merge_deltas 
+--------------
+ 
+(1 row)
+
+SELECT * FROM faceting.top_values('facetingtestsuite.documents'::regclass, facets=>array['tags', 'type']);
+ facet_name |   facet_value   | cardinality 
+------------+-----------------+-------------
+ tags       | blue            |          13
+ tags       | orange          |          11
+ tags       | green           |           5
+ tags       | brown           |           4
+ tags       | aqua            |           2
+ tags       | burlywood       |           2
+ tags       | olive           |           2
+ type       | application/pdf |           9
+ type       | image/png       |           3
+ type       | image/jpeg      |           2
+ type       | text/html       |           2
+ type       | text/csv        |           1
+(12 rows)
+
