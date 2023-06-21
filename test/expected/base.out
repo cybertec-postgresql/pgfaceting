@@ -28,6 +28,7 @@ SELECT faceting.add_faceting_to_table('facetingtestsuite.documents',
             faceting.datetrunc_facet('created', 'month'),
             faceting.datetrunc_facet('finished', 'month'),
             faceting.plain_facet('category_id'),
+            faceting.array_facet('tags'),
             faceting.plain_facet('type'),
             faceting.bucket_facet('size', buckets => array[0,1000,5000,10000,50000,100000,500000])
         ],
@@ -51,16 +52,21 @@ SELECT * FROM faceting.top_values('facetingtestsuite.documents'::regclass);
  finished    | Fri Jan 01 00:00:00 2010 PST |           6
  finished    | Tue Dec 01 00:00:00 2009 PST |           4
  category_id | 24                           |           5
- category_id | 9                            |           2
  category_id | 8                            |           2
+ category_id | 9                            |           2
  category_id | 12                           |           1
+ tags        | blue                         |           7
+ tags        | orange                       |           5
+ tags        | green                        |           4
+ tags        | burlywood                    |           2
+ tags        | olive                        |           2
  type        | application/pdf              |           5
  type        | text/html                    |           3
  type        | image/jpeg                   |           2
  size        | 6                            |           7
  size        | 7                            |           2
  size        | 5                            |           1
-(13 rows)
+(18 rows)
 
 COPY facetingtestsuite.documents (id, created, finished, category_id, tags, type, size, title) FROM stdin;
 SELECT faceting.merge_deltas('facetingtestsuite.documents'::regclass);
@@ -79,16 +85,21 @@ SELECT * FROM faceting.top_values('facetingtestsuite.documents'::regclass);
  category_id | 9                            |           4
  category_id | 8                            |           2
  category_id | 12                           |           1
+ tags        | blue                         |          15
+ tags        | orange                       |          14
+ tags        | green                        |           6
+ tags        | brown                        |           4
+ tags        | red                          |           3
  type        | application/pdf              |          10
  type        | image/jpeg                   |           3
- type        | text/html                    |           3
  type        | image/png                    |           3
+ type        | text/html                    |           3
  type        | text/csv                     |           1
  size        | 6                            |          14
  size        | 7                            |           4
  size        | 4                            |           1
  size        | 5                            |           1
-(16 rows)
+(21 rows)
 
 (SELECT 'created' AS facet_name, date_trunc('month', created)::text AS facet_value, COUNT(*) AS cardinality FROM facetingtestsuite.documents GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 5)
     UNION ALL
@@ -126,14 +137,51 @@ SELECT * FROM faceting.count_results('facetingtestsuite.documents'::regclass,
  created    | Tue Dec 01 00:00:00 2009 PST |          13
  finished   | Fri Jan 01 00:00:00 2010 PST |          11
  finished   | Tue Dec 01 00:00:00 2009 PST |           2
+ tags       | orange                       |          11
+ tags       | blue                         |           9
+ tags       | green                        |           5
+ tags       | brown                        |           4
+ tags       | red                          |           3
+ tags       | darkslateblue                |           2
+ tags       | aqua                         |           1
+ tags       | burlywood                    |           1
+ tags       | cadetblue                    |           1
+ tags       | candy pink                   |           1
+ tags       | chartreuse                   |           1
+ tags       | cherry                       |           1
+ tags       | chocolate                    |           1
+ tags       | coral                        |           1
+ tags       | cyan                         |           1
+ tags       | dimgray                      |           1
+ tags       | dirt brown                   |           1
+ tags       | floralwhite                  |           1
+ tags       | ivory                        |           1
+ tags       | lavender                     |           1
+ tags       | lightpink                    |           1
+ tags       | maroon                       |           1
+ tags       | olive                        |           1
+ tags       | pale gold                    |           1
+ tags       | pale peach                   |           1
+ tags       | peachy pink                  |           1
+ tags       | purple                       |           1
+ tags       | antiquewhite                 |           0
+ tags       | aqua blue                    |           0
+ tags       | aquamarine                   |           0
+ tags       | bisque                       |           0
+ tags       | lightcoral                   |           0
+ tags       | mustard brown                |           0
+ tags       | pink                         |           0
+ tags       | red purple                   |           0
+ tags       | rust                         |           0
+ tags       | very light pink              |           0
  type       | application/pdf              |           6
  type       | image/jpeg                   |           3
  type       | text/html                    |           2
- type       | text/csv                     |           1
  type       | image/png                    |           1
+ type       | text/csv                     |           1
  size       | 6                            |          10
  size       | 7                            |           2
  size       | 4                            |           1
  size       | 5                            |           0
-(12 rows)
+(49 rows)
 

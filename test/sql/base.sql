@@ -44,6 +44,7 @@ SELECT faceting.add_faceting_to_table('facetingtestsuite.documents',
             faceting.datetrunc_facet('created', 'month'),
             faceting.datetrunc_facet('finished', 'month'),
             faceting.plain_facet('category_id'),
+            faceting.array_facet('tags'),
             faceting.plain_facet('type'),
             faceting.bucket_facet('size', buckets => array[0,1000,5000,10000,50000,100000,500000])
         ],

@@ -38,6 +38,7 @@ CREATE TABLE faceting.facet_definition (
     facet_type text NOT NULL,
     base_column name,
     params jsonb,
+    is_multi bool not null,
     PRIMARY KEY (table_id, facet_id)
 );
 
@@ -75,9 +76,9 @@ BEGIN
     RETURNING table_id INTO v_table_id;
 
     WITH stored_definitions AS (
-        INSERT INTO faceting.facet_definition (table_id, facet_id, facet_name, facet_type, base_column, params)
-            SELECT v_table_id, assigned_id, facet_name, facet_type, base_column, params
-            FROM UNNEST(facets) WITH ORDINALITY AS x(_, _, facet_name, facet_type, base_column, params, assigned_id)
+        INSERT INTO faceting.facet_definition (table_id, facet_id, facet_name, facet_type, base_column, params, is_multi)
+            SELECT v_table_id, assigned_id, facet_name, facet_type, base_column, params, is_multi
+            FROM UNNEST(facets) WITH ORDINALITY AS x(_, _, facet_name, facet_type, base_column, params, is_multi, assigned_id)
             RETURNING *)
     SELECT array_agg(f) INTO v_facet_defs FROM stored_definitions f;
 
@@ -128,10 +129,26 @@ BEGIN
 END;
 $$;
 
+CREATE FUNCTION faceting._get_subquery_clause(fdef facet_definition, extra_cols text, table_alias text)
+    RETURNS text
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    result text;
+BEGIN
+    EXECUTE format('SELECT faceting.%s_facet_subquery($1, $2, $3)', fdef.facet_type) INTO result
+            USING fdef, extra_cols, table_alias;
+    RETURN result;
+END;
+$$;
+
+
 CREATE FUNCTION faceting.populate_facets_query(p_table_id oid) RETURNS text LANGUAGE plpgsql AS $$
 DECLARE
     sql text;
     values_entries text[];
+    subquery_entries text[];
+    clauses text[];
     v_chunk_function text;
     v_keycol name;
     tdef faceting.faceted_table;
@@ -139,13 +156,23 @@ BEGIN
     SELECT t.* INTO tdef FROM faceting.faceted_table t WHERE t.table_id = p_table_id;
     SELECT chunk_function, key INTO v_chunk_function, v_keycol FROM faceting.faceted_table WHERE table_id = p_table_id;
     SELECT array_agg(faceting._get_values_clause(fd, '', '') ORDER BY facet_id) INTO values_entries
-            FROM faceting.facet_definition fd WHERE table_id = p_table_id;
+            FROM faceting.facet_definition fd WHERE table_id = p_table_id AND NOT fd.is_multi;
+
+    SELECT array_agg(faceting._get_subquery_clause(fd, '', '')) INTO subquery_entries
+            FROM faceting.facet_definition fd WHERE table_id = p_table_id AND fd.is_multi;
+
+    IF array_length(values_entries, 1) > 0 THEN
+        clauses := array[format('VALUES %s', array_to_string(values_entries, E',\n               '))];
+    ELSE
+        clauses := array[];
+    END IF;
+    clauses := clauses || subquery_entries;
 
     sql := format($sql$
 SELECT facet_id, (%s) chunk_id, facet_value collate "POSIX", rb_build_agg(%s::int4 ORDER BY %s)
 FROM %s d,
     LATERAL (
-        VALUES %s
+        %s
     ) t(facet_id, facet_value)
 GROUP BY facet_id, facet_value collate "POSIX", chunk_id
     $sql$,
@@ -153,7 +180,8 @@ GROUP BY facet_id, facet_value collate "POSIX", chunk_id
         v_keycol,
         v_keycol,
         p_table_id::regclass::text,
-        array_to_string(values_entries, E',\n               '));
+        array_to_string(clauses, E'\n            UNION ALL\n        ')
+        );
     RETURN sql;
 END;
 $$;
@@ -168,7 +196,11 @@ DECLARE
     sql text;
     tdef faceting.faceted_table;
     insert_values text[];
+    insert_subqueries text[];
+    insert_clauses text[];
     delete_values text[];
+    delete_subqueries text[];
+    delete_clauses text[];
     base_columns text[];
 BEGIN
     SELECT t.* INTO tdef FROM faceting.faceted_table t WHERE t.table_id = p_table_id;
@@ -181,7 +213,26 @@ BEGIN
                      ORDER BY facet_id),
            array_agg(fd.base_column)
                 INTO insert_values, delete_values, base_columns
-            FROM faceting.facet_definition fd WHERE table_id = p_table_id;
+            FROM faceting.facet_definition fd WHERE table_id = p_table_id AND NOT fd.is_multi;
+
+    SELECT array_agg(faceting._get_subquery_clause(fd, format(', NEW.%I, 1', tdef.key) , 'NEW.')
+                     ORDER BY facet_id),
+           array_agg(faceting._get_subquery_clause(fd, format(', OLD.%I, -1', tdef.key) , 'OLD.')
+                     ORDER BY facet_id),
+           array_agg(fd.base_column) || base_columns
+                INTO insert_subqueries, delete_subqueries, base_columns
+            FROM faceting.facet_definition fd WHERE table_id = p_table_id AND fd.is_multi;
+
+    insert_clauses := CASE WHEN array_length(insert_values, 1) > 0 THEN
+            array['VALUES ' || array_to_string(insert_values, E',\n                       ')]
+        ELSE
+            '{}'::text[]
+        END || insert_subqueries;
+    delete_clauses := CASE WHEN array_length(delete_values, 1) > 0 THEN
+            array['VALUES ' || array_to_string(delete_values, E',\n                       ')]
+        ELSE
+            '{}'::text[]
+        END || delete_subqueries;
 
     sql := format($sql$
 CREATE FUNCTION %s() RETURNS trigger AS $func$
@@ -191,13 +242,13 @@ CREATE FUNCTION %s() RETURNS trigger AS $func$
         END IF;
         IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
             INSERT INTO %s (facet_id, facet_value, posting, delta)
-                VALUES %s
+                %s
                 ON CONFLICT (facet_id, facet_value, posting) DO UPDATE
                     SET delta = EXCLUDED.delta + %s.delta;
         END IF;
         IF TG_OP = 'DELETE' OR TG_OP = 'UPDATE' THEN
             INSERT INTO %s (facet_id, facet_value, posting, delta)
-                VALUES %s
+                %s
                 ON CONFLICT (facet_id, facet_value, posting) DO UPDATE
                 SET delta = EXCLUDED.delta + %s.delta;
         END IF;
@@ -209,14 +260,19 @@ CREATE TRIGGER %s
     AFTER INSERT OR DELETE OR UPDATE OF %s ON %s
     FOR EACH ROW EXECUTE FUNCTION %s();
 $sql$,
+            -- Trigger name
             faceting._qualified(tdef.schemaname, tfunc_name),
+            -- Key update check
             tdef.key, tdef.key,
+            -- Positive deltas
             faceting._qualified(tdef.schemaname, tdef.delta_table),
-            array_to_string(insert_values, E',\n                       '),
+            array_to_string(insert_clauses, E'\n                    UNION ALL\n                '),
             faceting._qualified(tdef.schemaname, tdef.delta_table),
+            -- Negative deltas
             faceting._qualified(tdef.schemaname, tdef.delta_table),
-            array_to_string(delete_values, E',\n                       '),
-            faceting._qualified(tdef.schemaname, tdef.delta_table)
+            array_to_string(delete_clauses, E'\n                    UNION ALL\n                '),
+            faceting._qualified(tdef.schemaname, tdef.delta_table),
+            -- Trigger definition
             trg_name,
             array_to_string(base_columns, ', '),
             faceting._qualified(tdef.schemaname, tdef.tablename),
@@ -261,7 +317,7 @@ $$;
 CREATE FUNCTION faceting.datetrunc_facet(col name, "precision" text, p_facet_name text = null)
     RETURNS facet_definition
     LANGUAGE SQL AS $$
-        SELECT null::int, null::int, coalesce(p_facet_name, col), 'datetrunc', col, jsonb_build_object('precision', "precision");
+        SELECT null::int, null::int, coalesce(p_facet_name, col), 'datetrunc', col, jsonb_build_object('precision', "precision"), false;
     $$;
 
 CREATE FUNCTION faceting.datetrunc_facet_values(fdef facet_definition, extra_cols text, table_alias text)
@@ -276,7 +332,7 @@ CREATE FUNCTION faceting.datetrunc_facet_values(fdef facet_definition, extra_col
 CREATE FUNCTION faceting.plain_facet(col name, p_facet_name text = null)
     RETURNS facet_definition
     LANGUAGE SQL AS $$
-        SELECT null::int, null::int, coalesce(p_facet_name, col), 'plain', col, '{}'::jsonb;
+        SELECT null::int, null::int, coalesce(p_facet_name, col), 'plain', col, '{}'::jsonb, false;
     $$;
 
 CREATE FUNCTION faceting.plain_facet_values(fdef facet_definition, extra_cols text, table_alias text)
@@ -290,7 +346,7 @@ CREATE FUNCTION faceting.plain_facet_values(fdef facet_definition, extra_cols te
 CREATE FUNCTION faceting.bucket_facet(col name, buckets anyarray, p_facet_name text = null)
     RETURNS facet_definition
     LANGUAGE SQL AS $$
-        SELECT null::int, null::int, coalesce(p_facet_name, col), 'bucket', col, jsonb_build_object('buckets', buckets::text);
+        SELECT null::int, null::int, coalesce(p_facet_name, col), 'bucket', col, jsonb_build_object('buckets', buckets::text), false;
     $$;
 
 CREATE FUNCTION faceting.bucket_facet_values(fdef facet_definition, extra_cols text, table_alias text)
@@ -301,6 +357,22 @@ CREATE FUNCTION faceting.bucket_facet_values(fdef facet_definition, extra_cols t
                 fdef.facet_id, table_alias, fdef.base_column, fdef.params->>'buckets', extra_cols);
         END;
     $$;
+
+CREATE FUNCTION faceting.array_facet(col name, p_facet_name text = null)
+    RETURNS facet_definition
+    LANGUAGE SQL AS $$
+        SELECT null::int, null::int, coalesce(p_facet_name, col), 'array', col, '{}'::jsonb, true;
+    $$;
+
+CREATE FUNCTION faceting.array_facet_subquery(fdef facet_definition, extra_cols text, table_alias text)
+    RETURNS text
+    LANGUAGE plpgsql AS $$
+        BEGIN
+            RETURN format('(SELECT %s, element_value::text%s FROM unnest(%s%I) element_value)',
+                fdef.facet_id, extra_cols, table_alias, fdef.base_column);
+        END;
+    $$;
+
 
 CREATE TYPE faceting.facet_counts AS (
     facet_name text,
@@ -330,7 +402,7 @@ BEGIN
                 ) x
             ) counts JOIN faceting.facet_definition fd USING (facet_id)
         WHERE rank <= 5 AND table_id = $1
-        ORDER BY facet_id, rank;
+        ORDER BY facet_id, rank, facet_value;
     $sql$, faceting._qualified(tdef.schemaname, tdef.facets_table)) USING p_table_id;
 END;
 $$;
@@ -378,7 +450,7 @@ BEGIN
     SELECT facet_name, facet_value, cardinality
     FROM results JOIN faceting.facet_definition fd USING (facet_id)
     WHERE fd.table_id = $2
-    ORDER BY facet_id, cardinality DESC
+    ORDER BY facet_id, cardinality DESC, facet_value
     $sql$,
         faceting._qualified(tdef.schemaname, tdef.facets_table),
         faceting._qualified(tdef.schemaname, tdef.facets_table));
