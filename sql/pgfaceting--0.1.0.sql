@@ -193,13 +193,13 @@ CREATE FUNCTION %s() RETURNS trigger AS $func$
             INSERT INTO %s (facet_id, facet_value, posting, delta)
                 VALUES %s
                 ON CONFLICT (facet_id, facet_value, posting) DO UPDATE
-                    SET delta = EXCLUDED.delta + documents_facets_deltas.delta;
+                    SET delta = EXCLUDED.delta + %s.delta;
         END IF;
         IF TG_OP = 'DELETE' OR TG_OP = 'UPDATE' THEN
             INSERT INTO %s (facet_id, facet_value, posting, delta)
                 VALUES %s
                 ON CONFLICT (facet_id, facet_value, posting) DO UPDATE
-                SET delta = EXCLUDED.delta + documents_facets_deltas.delta;
+                SET delta = EXCLUDED.delta + %s.delta;
         END IF;
         RETURN NULL;
     END;
@@ -214,7 +214,9 @@ $sql$,
             faceting._qualified(tdef.schemaname, tdef.delta_table),
             array_to_string(insert_values, E',\n                       '),
             faceting._qualified(tdef.schemaname, tdef.delta_table),
+            faceting._qualified(tdef.schemaname, tdef.delta_table),
             array_to_string(delete_values, E',\n                       '),
+            faceting._qualified(tdef.schemaname, tdef.delta_table)
             trg_name,
             array_to_string(base_columns, ', '),
             faceting._qualified(tdef.schemaname, tdef.tablename),
