@@ -14,16 +14,46 @@ CREATE TYPE facetingtestsuite.mimetype AS ENUM (
     'application/vnd.ms-powerpoint'
     );
 
+CREATE TABLE facetingtestsuite.employee (
+    id int8 primary key,
+    full_name text,
+    department text
+);
+
+CREATE TABLE facetingtestsuite.categories (
+    id int8 primary key,
+    owner_id int8 REFERENCES facetingtestsuite.employee (id)
+);
+
 CREATE TABLE facetingtestsuite.documents (
     id int8 primary key,
     created timestamptz not null,
     finished timestamptz,
-    category_id int8 not null,
+    category_id int8 not null REFERENCES facetingtestsuite.categories (id),
     tags text[],
     type facetingtestsuite.mimetype,
     size int8,
     title text
 );
+
+CREATE TABLE facetingtestsuite.authors (
+    document_id int8 REFERENCES facetingtestsuite.documents (id) ON DELETE CASCADE,
+    author_id int8 REFERENCES  facetingtestsuite.employee (id),
+    PRIMARY KEY (document_id, author_id)
+);
+
+COPY facetingtestsuite.employee (id, full_name, department) FROM stdin;
+1	John Smith	Director
+2	Jane Doe	Sales
+3	Jill James	Sales
+\.
+
+COPY facetingtestsuite.categories (id, owner_id) FROM stdin;
+8	2
+9	1
+12	3
+24	2
+\.
 
 COPY facetingtestsuite.documents (id, created, finished, category_id, tags, type, size, title) FROM stdin;
 1	2010-01-01 00:00:42+02	2010-01-01 09:45:29+02	8	{blue,burlywood,antiquewhite,olive}	application/pdf	71205	Interracial marriage Science Research
@@ -38,6 +68,22 @@ COPY facetingtestsuite.documents (id, created, finished, category_id, tags, type
 10	2010-01-01 00:01:31+02	2010-01-01 05:49:47+02	24	{green,lavender,blue,orange,red,darkslateblue}	text/html	199703	Rapidly expanding Large Interior Form, 1953-54, Man Enters the Cosmos and Nuclear Energy.
 \.
 
+COPY facetingtestsuite.authors FROM stdin;
+1	1
+1	2
+2	1
+3	1
+4	1
+4	2
+4	3
+5	1
+5	2
+6	2
+7	3
+9	1
+10	1
+\.
+
 SELECT faceting.add_faceting_to_table('facetingtestsuite.documents',
         key => 'id',
         facets => array[
@@ -46,12 +92,21 @@ SELECT faceting.add_faceting_to_table('facetingtestsuite.documents',
             faceting.plain_facet('category_id'),
             faceting.array_facet('tags'),
             faceting.plain_facet('type'),
-            faceting.bucket_facet('size', buckets => array[0,1000,5000,10000,50000,100000,500000])
+            faceting.bucket_facet('size', buckets => array[0,1000,5000,10000,50000,100000,500000]),
+            faceting.joined_plain_facet('e.department',
+                                        from_clause => 'facetingtestsuite.categories c JOIN facetingtestsuite.employee e ON c.owner_id = e.id',
+                                        correlation => 'c.id = {TABLE}.category_id'),
+            faceting.joined_plain_facet('author_id',
+                                        from_clause => 'facetingtestsuite.authors a',
+                                        correlation => 'a.document_id = {TABLE}.id',
+                                        p_facet_name => 'author')
         ],
         populate => false
     );
 
 SELECT faceting.populate_facets('facetingtestsuite.documents'::regclass);
+
+SELECT faceting.populate_facets_query('facetingtestsuite.documents'::regclass::oid);
 
 SELECT * FROM faceting.top_values('facetingtestsuite.documents'::regclass);
 

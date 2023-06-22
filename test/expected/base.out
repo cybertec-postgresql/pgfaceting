@@ -11,17 +11,34 @@ CREATE TYPE facetingtestsuite.mimetype AS ENUM (
     'application/zip',
     'application/vnd.ms-powerpoint'
     );
+CREATE TABLE facetingtestsuite.employee (
+    id int8 primary key,
+    full_name text,
+    department text
+);
+CREATE TABLE facetingtestsuite.categories (
+    id int8 primary key,
+    owner_id int8 REFERENCES facetingtestsuite.employee (id)
+);
 CREATE TABLE facetingtestsuite.documents (
     id int8 primary key,
     created timestamptz not null,
     finished timestamptz,
-    category_id int8 not null,
+    category_id int8 not null REFERENCES facetingtestsuite.categories (id),
     tags text[],
     type facetingtestsuite.mimetype,
     size int8,
     title text
 );
+CREATE TABLE facetingtestsuite.authors (
+    document_id int8 REFERENCES facetingtestsuite.documents (id) ON DELETE CASCADE,
+    author_id int8 REFERENCES  facetingtestsuite.employee (id),
+    PRIMARY KEY (document_id, author_id)
+);
+COPY facetingtestsuite.employee (id, full_name, department) FROM stdin;
+COPY facetingtestsuite.categories (id, owner_id) FROM stdin;
 COPY facetingtestsuite.documents (id, created, finished, category_id, tags, type, size, title) FROM stdin;
+COPY facetingtestsuite.authors FROM stdin;
 SELECT faceting.add_faceting_to_table('facetingtestsuite.documents',
         key => 'id',
         facets => array[
@@ -30,7 +47,14 @@ SELECT faceting.add_faceting_to_table('facetingtestsuite.documents',
             faceting.plain_facet('category_id'),
             faceting.array_facet('tags'),
             faceting.plain_facet('type'),
-            faceting.bucket_facet('size', buckets => array[0,1000,5000,10000,50000,100000,500000])
+            faceting.bucket_facet('size', buckets => array[0,1000,5000,10000,50000,100000,500000]),
+            faceting.joined_plain_facet('e.department',
+                                        from_clause => 'facetingtestsuite.categories c JOIN facetingtestsuite.employee e ON c.owner_id = e.id',
+                                        correlation => 'c.id = {TABLE}.category_id'),
+            faceting.joined_plain_facet('author_id',
+                                        from_clause => 'facetingtestsuite.authors a',
+                                        correlation => 'a.document_id = {TABLE}.id',
+                                        p_facet_name => 'author')
         ],
         populate => false
     );
@@ -43,6 +67,29 @@ SELECT faceting.populate_facets('facetingtestsuite.documents'::regclass);
  populate_facets 
 -----------------
  
+(1 row)
+
+SELECT faceting.populate_facets_query('facetingtestsuite.documents'::regclass::oid);
+                                                                    populate_facets_query                                                                     
+--------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                             +
+ SELECT facet_id, (id >> 20) chunk_id, facet_value collate "POSIX", rb_build_agg(id::int4 ORDER BY id)                                                       +
+ FROM facetingtestsuite.documents d,                                                                                                                         +
+     LATERAL (                                                                                                                                               +
+         VALUES (1, date_trunc('month', d.created)::text),                                                                                                   +
+                (2, date_trunc('month', d.finished)::text),                                                                                                  +
+                (3, d.category_id::text),                                                                                                                    +
+                (5, d.type::text),                                                                                                                           +
+                (6, width_bucket(d.size, '{0,1000,5000,10000,50000,100000,500000}')::text)                                                                   +
+             UNION ALL                                                                                                                                       +
+         (SELECT 4, element_value::text FROM unnest(d.tags) element_value)                                                                                   +
+             UNION ALL                                                                                                                                       +
+         (SELECT 7, e.department::text FROM facetingtestsuite.categories c JOIN facetingtestsuite.employee e ON c.owner_id = e.id WHERE c.id = d.category_id)+
+             UNION ALL                                                                                                                                       +
+         (SELECT 8, author_id::text FROM facetingtestsuite.authors a WHERE a.document_id = d.id)                                                             +
+     ) t(facet_id, facet_value)                                                                                                                              +
+ GROUP BY facet_id, facet_value collate "POSIX", chunk_id                                                                                                    +
+     
 (1 row)
 
 SELECT * FROM faceting.top_values('facetingtestsuite.documents'::regclass);
@@ -66,7 +113,12 @@ SELECT * FROM faceting.top_values('facetingtestsuite.documents'::regclass);
  size        | 6                            |           7
  size        | 7                            |           2
  size        | 5                            |           1
-(18 rows)
+ department  | Sales                        |           8
+ department  | Director                     |           2
+ author      | 1                            |           7
+ author      | 2                            |           4
+ author      | 3                            |           2
+(23 rows)
 
 COPY facetingtestsuite.documents (id, created, finished, category_id, tags, type, size, title) FROM stdin;
 SELECT faceting.merge_deltas('facetingtestsuite.documents'::regclass);
@@ -99,7 +151,12 @@ SELECT * FROM faceting.top_values('facetingtestsuite.documents'::regclass);
  size        | 7                            |           4
  size        | 4                            |           1
  size        | 5                            |           1
-(21 rows)
+ department  | Sales                        |           8
+ department  | Director                     |           2
+ author      | 1                            |           7
+ author      | 2                            |           4
+ author      | 3                            |           2
+(26 rows)
 
 (SELECT 'created' AS facet_name, date_trunc('month', created)::text AS facet_value, COUNT(*) AS cardinality FROM facetingtestsuite.documents GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 5)
     UNION ALL
@@ -183,7 +240,12 @@ SELECT * FROM faceting.count_results('facetingtestsuite.documents'::regclass,
  size       | 7                            |           2
  size       | 4                            |           1
  size       | 5                            |           0
-(49 rows)
+ department | Sales                        |           5
+ department | Director                     |           0
+ author     | 1                            |           3
+ author     | 2                            |           2
+ author     | 3                            |           2
+(54 rows)
 
 DELETE FROM facetingtestsuite.documents WHERE 'red' = ANY (tags);
 SELECT faceting.merge_deltas('facetingtestsuite.documents'::regclass);
