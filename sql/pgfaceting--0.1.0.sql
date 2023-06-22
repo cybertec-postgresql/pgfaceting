@@ -25,8 +25,8 @@ CREATE TABLE faceting.faceted_table (
     facets_table text,
     delta_table text,
     key name,
-    chunk_function text
-
+    key_type text,
+    chunk_bits int
 );
 
 SELECT pg_catalog.pg_extension_config_dump('faceting.faceted_table', '');
@@ -48,7 +48,7 @@ SELECT pg_catalog.pg_extension_config_dump('faceting.facet_definition', '');
 CREATE FUNCTION faceting.add_faceting_to_table(p_table regclass,
                                                key name,
                                                facets facet_definition[],
-                                               chunk_function text = null,
+                                               chunk_bits int = 20,
                                                keep_deltas bool = true,
                                                populate bool = true)
     RETURNS void
@@ -61,19 +61,34 @@ DECLARE
     delta_tablename text;
     v_table_id int;
     v_facet_defs faceting.facet_definition[];
+    key_type text;
 BEGIN
     SELECT relname, nspname INTO tablename, schemaname
         FROM pg_class c JOIN pg_namespace n ON relnamespace = n.oid WHERE c.oid = p_table::oid;
-    -- Default chunking size is 1Mi. TODO: check for numeric key
-    chunk_function := COALESCE(chunk_function, format('%s >> 20', key));
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Cannot find table %', p_table;
+    END IF;
+
+    -- Can't make us of highest bit of int4 because don't want to dealt with negative values
+    IF chunk_bits NOT BETWEEN 1 AND 31 THEN
+        RAISE EXCEPTION 'Invalid number of bits per chunk: %', chunk_bits;
+    END IF;
+
+    -- Default chunking size is 1Mi.
     /* TODO: namespace qualify to be in the same schema as parent table */
     facet_tablename := faceting._identifier_append(tablename, '_facets');
     delta_tablename := faceting._identifier_append(tablename, '_facets_deltas');
 
-    /* TODO: check table exists and key column is 4 byte integer */
+    SELECT t.typname INTO key_type FROM pg_attribute a JOIN pg_type t ON t.oid = a.atttypid
+                                       WHERE attrelid = p_table::oid AND attname = key;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Key column % not found in %s.%s', key, schemaname, tablename;
+    ELSIF key_type NOT IN ('int2', 'int4', 'int8') THEN
+        RAISE EXCEPTION 'Key column type % is not supported.', key_type;
+    END IF;
 
-    INSERT INTO faceting.faceted_table (table_id, schemaname, tablename, facets_table, delta_table, key, chunk_function)
-    VALUES (p_table::oid, schemaname, tablename, facet_tablename, delta_tablename, key, chunk_function)
+    INSERT INTO faceting.faceted_table (table_id, schemaname, tablename, facets_table, delta_table, key, key_type, chunk_bits)
+    VALUES (p_table::oid, schemaname, tablename, facet_tablename, delta_tablename, key, key_type, chunk_bits)
     RETURNING table_id INTO v_table_id;
 
     WITH stored_definitions AS (
@@ -102,11 +117,11 @@ BEGIN
             CREATE TABLE %s (
                 facet_id int4 not null,
                 facet_value text collate "C" null,
-                posting int4,
+                posting %s not null,
                 delta int2,
                 primary key (facet_id, facet_value, posting)
             );
-            $sql$, faceting._qualified(schemaname, delta_tablename));
+            $sql$, faceting._qualified(schemaname, delta_tablename), key_type);
 
         PERFORM faceting.create_delta_trigger(v_table_id);
     END IF;
@@ -150,12 +165,12 @@ DECLARE
     values_entries text[];
     subquery_entries text[];
     clauses text[];
-    v_chunk_function text;
+    v_chunk_bits int;
     v_keycol name;
     tdef faceting.faceted_table;
 BEGIN
     SELECT t.* INTO tdef FROM faceting.faceted_table t WHERE t.table_id = p_table_id;
-    SELECT chunk_function, key INTO v_chunk_function, v_keycol FROM faceting.faceted_table WHERE table_id = p_table_id;
+    SELECT chunk_bits, key INTO v_chunk_bits, v_keycol FROM faceting.faceted_table WHERE table_id = p_table_id;
     SELECT array_agg(faceting._get_values_clause(fd, '', 'd.') ORDER BY facet_id) INTO values_entries
             FROM faceting.facet_definition fd WHERE table_id = p_table_id AND NOT fd.is_multi;
 
@@ -170,15 +185,17 @@ BEGIN
     clauses := clauses || subquery_entries;
 
     sql := format($sql$
-SELECT facet_id, (%s) chunk_id, facet_value collate "POSIX", rb_build_agg(%s::int4 ORDER BY %s)
+SELECT facet_id, (%s >> %s)::int4 chunk_id, facet_value collate "POSIX", rb_build_agg((%s & ((1 << %s) - 1))::int4 ORDER BY %s)
 FROM %s d,
     LATERAL (
         %s
     ) t(facet_id, facet_value)
 GROUP BY facet_id, facet_value collate "POSIX", chunk_id
     $sql$,
-        v_chunk_function,
         v_keycol,
+        v_chunk_bits,
+        v_keycol,
+        v_chunk_bits,
         v_keycol,
         p_table_id::regclass::text,
         array_to_string(clauses, E'\n            UNION ALL\n        ')
@@ -509,10 +526,10 @@ DECLARE
 WITH to_be_aggregated AS (DELETE FROM %s RETURNING *),
 chunk_deltas AS (
     SELECT facet_id,
-		   (%s) chunk_id,
+		   (posting >> %s) chunk_id,
 		   facet_value,
-		   coalesce(rb_build_agg(posting) FILTER (WHERE delta > 0), '\x3a30000000000000') AS postings_added,
-		   coalesce(rb_build_agg(posting) FILTER (WHERE delta < 0), '\x3a30000000000000') AS postings_deleted
+		   coalesce(rb_build_agg((posting & ((1<<%s) - 1))::int4) FILTER (WHERE delta > 0), '\x3a30000000000000') AS postings_added,
+		   coalesce(rb_build_agg((posting & ((1<<%s) - 1))::int4) FILTER (WHERE delta < 0), '\x3a30000000000000') AS postings_deleted
     FROM to_be_aggregated
     GROUP BY 1,2,3
 ),
@@ -527,7 +544,7 @@ INSERT INTO %s SELECT facet_id, chunk_id, facet_value, postings_added
     ON CONFLICT (facet_id, facet_value, chunk_id) DO NOTHING;
 		$sql$,
 		faceting._qualified(tdef.schemaname, tdef.delta_table),
-		replace(tdef.chunk_function, tdef.key, 'posting'),
+		tdef.chunk_bits, tdef.chunk_bits, tdef.chunk_bits,
 		faceting._qualified(tdef.schemaname, tdef.facets_table),
         faceting._qualified(tdef.schemaname, tdef.facets_table)
 	);

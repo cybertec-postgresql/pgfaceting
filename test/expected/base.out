@@ -73,7 +73,7 @@ SELECT faceting.populate_facets_query('facetingtestsuite.documents'::regclass::o
                                                                     populate_facets_query                                                                     
 --------------------------------------------------------------------------------------------------------------------------------------------------------------
                                                                                                                                                              +
- SELECT facet_id, (id >> 20) chunk_id, facet_value collate "POSIX", rb_build_agg(id::int4 ORDER BY id)                                                       +
+ SELECT facet_id, (id >> 20)::int4 chunk_id, facet_value collate "POSIX", rb_build_agg((id & ((1 << 20) - 1))::int4 ORDER BY id)                             +
  FROM facetingtestsuite.documents d,                                                                                                                         +
      LATERAL (                                                                                                                                               +
          VALUES (1, date_trunc('month', d.created)::text),                                                                                                   +
