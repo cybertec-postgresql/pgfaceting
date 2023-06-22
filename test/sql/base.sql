@@ -155,3 +155,11 @@ SELECT * FROM faceting.top_values('facetingtestsuite.documents'::regclass, facet
 
 SELECT faceting.drop_facets('facetingtestsuite.documents', array['type', 'tags', 'not existing']);
 SELECT * FROM faceting.top_values('facetingtestsuite.documents'::regclass);
+
+SELECT faceting.drop_faceting('facetingtestsuite.documents');
+
+-- Check that adding faceting back in works
+SELECT faceting.add_faceting_to_table('facetingtestsuite.documents',
+        key => 'id',
+        facets => array[faceting.plain_facet('category_id')]);
+SELECT * FROM faceting.top_values('facetingtestsuite.documents'::regclass);

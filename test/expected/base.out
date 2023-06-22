@@ -331,3 +331,27 @@ SELECT * FROM faceting.top_values('facetingtestsuite.documents'::regclass);
  department  | Director                     |           2
 (16 rows)
 
+SELECT faceting.drop_faceting('facetingtestsuite.documents');
+ drop_faceting 
+---------------
+ t
+(1 row)
+
+-- Check that adding faceting back in works
+SELECT faceting.add_faceting_to_table('facetingtestsuite.documents',
+        key => 'id',
+        facets => array[faceting.plain_facet('category_id')]);
+ add_faceting_to_table 
+-----------------------
+ 
+(1 row)
+
+SELECT * FROM faceting.top_values('facetingtestsuite.documents'::regclass);
+ facet_name  | facet_value | cardinality 
+-------------+-------------+-------------
+ category_id | 24          |          10
+ category_id | 9           |           4
+ category_id | 8           |           2
+ category_id | 12          |           1
+(4 rows)
+

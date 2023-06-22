@@ -238,6 +238,39 @@ BEGIN
 END;
 $$;
 
+CREATE FUNCTION faceting.drop_faceting(p_table regclass)
+    RETURNS bool
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_table_id oid;
+    tdef faceting.faceted_table;
+    tfunc_name text;
+    trg_name text;
+BEGIN
+    v_table_id := p_table::oid;
+    SELECT t.* INTO tdef FROM faceting.faceted_table t WHERE t.table_id = v_table_id;
+    IF NOT FOUND THEN
+        RAISE NOTICE 'Table % is not faceted', p_table;
+        RETURN true;
+    END IF;
+
+    EXECUTE format('LOCK TABLE %s', faceting._qualified(tdef.schemaname, tdef.tablename));
+
+    DELETE FROM faceting.facet_definition WHERE table_id = v_table_id;
+    DELETE FROM faceting.faceted_table WHERE table_id = v_table_id;
+
+    EXECUTE format('DROP TABLE %s', faceting._qualified(tdef.schemaname, tdef.facets_table));
+    IF tdef.delta_table IS NOT NULL THEN
+        SELECT tn.tfunc_name, tn.trg_name INTO tfunc_name, trg_name FROM faceting._trigger_names(tdef.tablename) tn;
+        EXECUTE format('DROP TRIGGER %s ON %s', trg_name, faceting._qualified(tdef.schemaname, tdef.tablename));
+        EXECUTE format('DROP FUNCTION %s', faceting._qualified(tdef.schemaname, tfunc_name));
+        EXECUTE format('DROP TABLE %s', faceting._qualified(tdef.schemaname, tdef.delta_table));
+    END IF;
+
+    RETURN true;
+END
+$$;
 CREATE FUNCTION faceting.populate_facets_query(p_table_id oid, facets text[] = null)
     RETURNS text
     LANGUAGE plpgsql
@@ -288,6 +321,16 @@ GROUP BY facet_id, facet_value collate "POSIX", chunk_id
 END;
 $$;
 
+CREATE FUNCTION _trigger_names(tablename text, OUT tfunc_name text, OUT trg_name text)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    tfunc_name := faceting._identifier_append(tablename, '_facets_trigger');
+    trg_name := faceting._identifier_append(tablename, '_facets_update');
+    RETURN;
+END;
+$$;
+
 CREATE FUNCTION create_delta_trigger(p_table_id oid, p_create bool = true)
     RETURNS text
     LANGUAGE plpgsql
@@ -306,8 +349,7 @@ DECLARE
     base_columns text[];
 BEGIN
     SELECT t.* INTO tdef FROM faceting.faceted_table t WHERE t.table_id = p_table_id;
-    tfunc_name := faceting._identifier_append(tdef.tablename, '_facets_trigger');
-    trg_name := faceting._identifier_append(tdef.tablename, '_facets_update');
+    SELECT tn.tfunc_name, tn.trg_name INTO tfunc_name, trg_name FROM faceting._trigger_names(tdef.tablename) tn;
 
     SELECT array_agg(faceting._get_values_clause(fd, format(', NEW.%I, 1', tdef.key) , 'NEW.')
                      ORDER BY facet_id),
