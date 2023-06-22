@@ -1,5 +1,5 @@
 EXTENSION = pgfaceting
-DATA = sql/pgfaceting--0.1.0.sql
+DATA = sql/pgfaceting--0.2.0.sql
 
 TESTS        = $(wildcard test/sql/*.sql)
 REGRESS      = $(patsubst test/sql/%.sql,%,$(TESTS))
