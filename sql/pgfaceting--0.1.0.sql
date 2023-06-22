@@ -200,6 +200,44 @@ BEGIN
 END;
 $$;
 
+CREATE FUNCTION faceting.drop_facets(p_table regclass,
+                                    facets text[])
+    RETURNS SETOF text
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_table_id oid;
+    tdef faceting.faceted_table;
+    v_dropped_names text[];
+    v_dropped_ids int4[];
+BEGIN
+    v_table_id := p_table::oid;
+    SELECT t.* INTO tdef FROM faceting.faceted_table t WHERE t.table_id = v_table_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Table % is not faceted', p_table;
+    END IF;
+
+    WITH dropped_facets AS (
+        DELETE FROM faceting.facet_definition
+           WHERE table_id = v_table_id AND facet_name = ANY (facets)
+           RETURNING facet_id, facet_name)
+    SELECT array_agg(facet_id), array_agg(facet_name) INTO v_dropped_ids, v_dropped_names FROM dropped_facets;
+
+    EXECUTE format('DELETE FROM %s WHERE facet_id = ANY ($1)',
+                   faceting._qualified(tdef.schemaname, tdef.facets_table))
+        USING v_dropped_ids;
+    IF tdef.delta_table IS NOT NULL THEN
+        -- Important to replace trigger first so deletion runs with a new snapshot
+        PERFORM faceting.create_delta_trigger(v_table_id);
+        EXECUTE format('DELETE FROM %s WHERE facet_id = ANY ($1)',
+                       faceting._qualified(tdef.schemaname, tdef.delta_table))
+            USING v_dropped_ids;
+    END IF;
+
+    RETURN QUERY SELECT unnest(v_dropped_names);
+END;
+$$;
+
 CREATE FUNCTION faceting.populate_facets_query(p_table_id oid, facets text[] = null)
     RETURNS text
     LANGUAGE plpgsql

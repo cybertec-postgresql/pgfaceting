@@ -303,3 +303,31 @@ SELECT * FROM faceting.top_values('facetingtestsuite.documents'::regclass, facet
  type       | text/csv        |           1
 (12 rows)
 
+SELECT faceting.drop_facets('facetingtestsuite.documents', array['type', 'tags', 'not existing']);
+ drop_facets 
+-------------
+ tags
+ type
+(2 rows)
+
+SELECT * FROM faceting.top_values('facetingtestsuite.documents'::regclass);
+ facet_name  |         facet_value          | cardinality 
+-------------+------------------------------+-------------
+ created     | Tue Dec 01 00:00:00 2009 PST |          17
+ finished    | Fri Jan 01 00:00:00 2010 PST |          13
+ finished    | Tue Dec 01 00:00:00 2009 PST |           4
+ category_id | 24                           |          10
+ category_id | 9                            |           4
+ category_id | 8                            |           2
+ category_id | 12                           |           1
+ size        | 6                            |          11
+ size        | 7                            |           4
+ size        | 4                            |           1
+ size        | 5                            |           1
+ author      | 1                            |           7
+ author      | 2                            |           4
+ author      | 3                            |           2
+ department  | Sales                        |           8
+ department  | Director                     |           2
+(16 rows)
+

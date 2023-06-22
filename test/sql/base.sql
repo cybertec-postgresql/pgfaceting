@@ -152,3 +152,6 @@ DELETE FROM facetingtestsuite.documents WHERE 'red' = ANY (tags);
 SELECT faceting.merge_deltas('facetingtestsuite.documents'::regclass);
 
 SELECT * FROM faceting.top_values('facetingtestsuite.documents'::regclass, facets=>array['tags', 'type']);
+
+SELECT faceting.drop_facets('facetingtestsuite.documents', array['type', 'tags', 'not existing']);
+SELECT * FROM faceting.top_values('facetingtestsuite.documents'::regclass);
