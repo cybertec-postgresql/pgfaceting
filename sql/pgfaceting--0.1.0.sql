@@ -102,6 +102,7 @@ BEGIN
             RETURNING *)
     SELECT array_agg(f) INTO v_facet_defs FROM stored_definitions f;
 
+    /* TODO: allow NULLs to be stored for PG v15+ */
     -- Create facet storage
     EXECUTE format($sql$
         CREATE TABLE %s (
@@ -307,6 +308,7 @@ FROM %s d,
     LATERAL (
         %s
     ) t(facet_id, facet_value)
+WHERE facet_value IS NOT NULL
 GROUP BY facet_id, facet_value collate "POSIX", chunk_id
     $sql$,
         v_keycol,
@@ -386,13 +388,21 @@ CREATE OR REPLACE FUNCTION %s() RETURNS trigger AS $func$
         END IF;
         IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
             INSERT INTO %s (facet_id, facet_value, posting, delta)
+                SELECT *
+                FROM (
                 %s
+                ) AS deltas(facet_id, facet_value, posting, delta)
+                WHERE facet_value IS NOT NULL
                 ON CONFLICT (facet_id, facet_value, posting) DO UPDATE
                     SET delta = EXCLUDED.delta + %s.delta;
         END IF;
         IF TG_OP = 'DELETE' OR TG_OP = 'UPDATE' THEN
             INSERT INTO %s (facet_id, facet_value, posting, delta)
+                SELECT *
+                FROM (
                 %s
+                ) AS deltas(facet_id, facet_value, posting, delta)
+                WHERE facet_value IS NOT NULL
                 ON CONFLICT (facet_id, facet_value, posting) DO UPDATE
                 SET delta = EXCLUDED.delta + %s.delta;
         END IF;

@@ -29,7 +29,7 @@ CREATE TABLE facetingtestsuite.documents (
     id int8 primary key,
     created timestamptz not null,
     finished timestamptz,
-    category_id int8 not null REFERENCES facetingtestsuite.categories (id),
+    category_id int8 REFERENCES facetingtestsuite.categories (id),
     tags text[],
     type facetingtestsuite.mimetype,
     size int8,
@@ -62,7 +62,7 @@ COPY facetingtestsuite.documents (id, created, finished, category_id, tags, type
 4	2010-01-01 00:00:35+02	2010-01-02 01:12:08+02	24	{orange,green,blue}	text/html	280663	Database of (/ˈdɛnmɑːrk/; Danish: Danmark [ˈd̥ænmɑɡ̊]) is a spiral
 5	2010-01-01 00:01:06+02	2010-01-01 23:18:56+02	24	{orange,chocolate}	image/jpeg	111770	Passage to now resumed
 6	2010-01-01 00:01:05+02	2010-01-01 10:25:29+02	8	{blue,aquamarine}	application/pdf	110809	East. Mesopotamia, BCE – 480 BCE), when determining a value that
-7	2010-01-01 00:00:57+02	2010-01-02 00:41:01+02	24	{}	application/pdf	230803	Bahía de It has also conquered 13 South American finds and another
+7	2010-01-01 00:00:57+02	2010-01-02 00:41:01+02	\N	{}	application/pdf	230803	Bahía de It has also conquered 13 South American finds and another
 8	2010-01-01 00:01:11+02	2010-01-01 14:22:11+02	24	{blue,burlywood,"dirt brown",orange,ivory,brown,green,olive,lightpink}	image/jpeg	1304196	15-fold: from the mid- to late-20th
 9	2010-01-01 00:01:47+02	2010-01-01 09:59:57+02	9	{green,blue,orange}	application/pdf	142410	Popular Western localized function model. Psychiatric interventions such as local businesses, but also
 10	2010-01-01 00:01:31+02	2010-01-01 05:49:47+02	24	{green,lavender,blue,orange,red,darkslateblue}	text/html	199703	Rapidly expanding Large Interior Form, 1953-54, Man Enters the Cosmos and Nuclear Energy.
