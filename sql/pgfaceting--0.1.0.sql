@@ -43,6 +43,8 @@ CREATE TABLE faceting.facet_definition (
     PRIMARY KEY (table_id, facet_id)
 );
 
+CREATE UNIQUE INDEX facet_definition_uniq_name ON faceting.facet_definition (table_id, facet_name);
+
 SELECT pg_catalog.pg_extension_config_dump('faceting.facet_definition', '');
 
 CREATE FUNCTION faceting.add_faceting_to_table(p_table regclass,
@@ -87,8 +89,10 @@ BEGIN
         RAISE EXCEPTION 'Key column type % is not supported.', key_type;
     END IF;
 
-    INSERT INTO faceting.faceted_table (table_id, schemaname, tablename, facets_table, delta_table, key, key_type, chunk_bits)
-    VALUES (p_table::oid, schemaname, tablename, facet_tablename, delta_tablename, key, key_type, chunk_bits)
+    INSERT INTO faceting.faceted_table (table_id, schemaname, tablename, facets_table, delta_table, key,
+                                        key_type, chunk_bits)
+    VALUES (p_table::oid, schemaname, tablename, facet_tablename, CASE WHEN keep_deltas THEN delta_tablename END, key,
+            key_type, chunk_bits)
     RETURNING table_id INTO v_table_id;
 
     WITH stored_definitions AS (
@@ -158,8 +162,48 @@ BEGIN
 END;
 $$;
 
+CREATE FUNCTION faceting.add_facets(p_table regclass,
+                                    facets facet_definition[],
+                                    populate bool = true)
+    RETURNS SETOF int4
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_table_id oid;
+    tdef faceting.faceted_table;
+    highest_facet_id int4;
+    v_facet_names text[];
+    v_facet_ids int4[];
+BEGIN
+    v_table_id := p_table::oid;
+    SELECT t.* INTO tdef FROM faceting.faceted_table t WHERE t.table_id = v_table_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Table % is not faceted', p_table;
+    END IF;
+    SELECT MAX(facet_id) INTO highest_facet_id FROM faceting.facet_definition WHERE table_id = v_table_id;
 
-CREATE FUNCTION faceting.populate_facets_query(p_table_id oid) RETURNS text LANGUAGE plpgsql AS $$
+    WITH stored_definitions AS (
+        INSERT INTO faceting.facet_definition (table_id, facet_id, facet_name, facet_type, base_column, params, is_multi, supports_delta)
+            SELECT v_table_id, highest_facet_id + assigned_id, facet_name, facet_type, base_column, params, is_multi, supports_delta
+            FROM UNNEST(facets) WITH ORDINALITY AS x(_, _, facet_name, facet_type, base_column, params, is_multi, supports_delta, assigned_id)
+            RETURNING *)
+    SELECT array_agg(f.facet_name), array_agg(f.facet_id) INTO v_facet_names, v_facet_ids FROM stored_definitions f;
+
+    IF tdef.delta_table IS NOT NULL THEN
+        PERFORM faceting.create_delta_trigger(v_table_id);
+    END IF;
+
+    IF populate THEN
+        PERFORM faceting.populate_facets(v_table_id, false, facets := v_facet_names);
+    END IF;
+    RETURN QUERY SELECT unnest(v_facet_ids);
+END;
+$$;
+
+CREATE FUNCTION faceting.populate_facets_query(p_table_id oid, facets text[] = null)
+    RETURNS text
+    LANGUAGE plpgsql
+    AS $$
 DECLARE
     sql text;
     values_entries text[];
@@ -172,10 +216,12 @@ BEGIN
     SELECT t.* INTO tdef FROM faceting.faceted_table t WHERE t.table_id = p_table_id;
     SELECT chunk_bits, key INTO v_chunk_bits, v_keycol FROM faceting.faceted_table WHERE table_id = p_table_id;
     SELECT array_agg(faceting._get_values_clause(fd, '', 'd.') ORDER BY facet_id) INTO values_entries
-            FROM faceting.facet_definition fd WHERE table_id = p_table_id AND NOT fd.is_multi;
+            FROM faceting.facet_definition fd WHERE (facets IS NULL OR fd.facet_name = ANY (facets))
+                                                    AND table_id = p_table_id AND NOT fd.is_multi;
 
     SELECT array_agg(faceting._get_subquery_clause(fd, '', 'd.')) INTO subquery_entries
-            FROM faceting.facet_definition fd WHERE table_id = p_table_id AND fd.is_multi;
+            FROM faceting.facet_definition fd WHERE (facets IS NULL OR fd.facet_name = ANY (facets))
+                                                    AND table_id = p_table_id AND fd.is_multi;
 
     IF array_length(values_entries, 1) > 0 THEN
         clauses := array[format('VALUES %s', array_to_string(values_entries, E',\n               '))];
@@ -253,7 +299,7 @@ BEGIN
         END || delete_subqueries;
 
     sql := format($sql$
-CREATE FUNCTION %s() RETURNS trigger AS $func$
+CREATE OR REPLACE FUNCTION %s() RETURNS trigger AS $func$
     BEGIN
         IF TG_OP = 'UPDATE' AND OLD.%I != NEW.%I THEN
             RAISE EXCEPTION 'Update of key column of faceted tables is not supported';
@@ -274,7 +320,7 @@ CREATE FUNCTION %s() RETURNS trigger AS $func$
     END;
 $func$ LANGUAGE plpgsql;
 
-CREATE TRIGGER %s
+CREATE OR REPLACE TRIGGER %s
     AFTER INSERT OR DELETE OR UPDATE OF %s ON %s
     FOR EACH ROW EXECUTE FUNCTION %s();
 $sql$,
@@ -303,7 +349,7 @@ $sql$,
 END;
 $$;
 
-CREATE FUNCTION faceting.populate_facets(p_table_id oid, p_use_copy bool = false, debug bool = false)
+CREATE FUNCTION faceting.populate_facets(p_table_id oid, p_use_copy bool = false, debug bool = false, facets text[] = null)
     RETURNS void
     LANGUAGE plpgsql
     AS $$
@@ -316,7 +362,7 @@ BEGIN
     IF tdef.table_id IS NULL THEN
         RAISE EXCEPTION 'Table % not found', p_table_id;
     END IF;
-    query := faceting.populate_facets_query(p_table_id);
+    query := faceting.populate_facets_query(p_table_id, facets => facets);
     IF p_use_copy THEN
         EXECUTE format($copy$COPY %s FROM PROGRAM $prog$ psql -h localhost %s -c "COPY (%s) TO STDOUT" $prog$ $copy$,
             faceting._qualified(tdef.schemaname, tdef.facets_table),

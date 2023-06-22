@@ -91,11 +91,7 @@ SELECT faceting.add_faceting_to_table('facetingtestsuite.documents',
             faceting.datetrunc_facet('finished', 'month'),
             faceting.plain_facet('category_id'),
             faceting.array_facet('tags'),
-            faceting.plain_facet('type'),
             faceting.bucket_facet('size', buckets => array[0,1000,5000,10000,50000,100000,500000]),
-            faceting.joined_plain_facet('e.department',
-                                        from_clause => 'facetingtestsuite.categories c JOIN facetingtestsuite.employee e ON c.owner_id = e.id',
-                                        correlation => 'c.id = {TABLE}.category_id'),
             faceting.joined_plain_facet('author_id',
                                         from_clause => 'facetingtestsuite.authors a',
                                         correlation => 'a.document_id = {TABLE}.id',
@@ -105,6 +101,17 @@ SELECT faceting.add_faceting_to_table('facetingtestsuite.documents',
     );
 
 SELECT faceting.populate_facets('facetingtestsuite.documents'::regclass);
+
+SELECT * FROM faceting.top_values('facetingtestsuite.documents'::regclass);
+
+SELECT faceting.add_facets('facetingtestsuite.documents',
+    facets=>array[
+        faceting.plain_facet('type'),
+        faceting.joined_plain_facet('e.department',
+                                    from_clause => 'facetingtestsuite.categories c JOIN facetingtestsuite.employee e ON c.owner_id = e.id',
+                                    correlation => 'c.id = {TABLE}.category_id')
+
+    ]);
 
 SELECT faceting.populate_facets_query('facetingtestsuite.documents'::regclass::oid);
 
