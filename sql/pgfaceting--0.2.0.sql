@@ -585,12 +585,12 @@ BEGIN
                 GROUP BY 1, 2
                 ) x
             ) counts JOIN faceting.facet_definition fd USING (facet_id)
-        WHERE rank <= 5 AND table_id = $1
+        WHERE rank <= $2 AND table_id = $1
         ORDER BY facet_id, rank, facet_value;
     $sql$,
         faceting._qualified(tdef.schemaname, tdef.facets_table),
         facet_filter)
-    USING p_table_id;
+    USING p_table_id, n;
 END;
 $$;
 
