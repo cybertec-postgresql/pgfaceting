@@ -134,15 +134,15 @@ SELECT faceting.merge_deltas('facetingtestsuite.documents'::regclass);
 
 SELECT * FROM faceting.top_values('facetingtestsuite.documents'::regclass);
 
-(SELECT 'created' AS facet_name, date_trunc('month', created)::text AS facet_value, COUNT(*) AS cardinality FROM facetingtestsuite.documents GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 5)
+(SELECT 'created' AS facet_name, date_trunc('month', created)::text AS facet_value, COUNT(*) AS cardinality FROM facetingtestsuite.documents GROUP BY 1, 2 ORDER BY 3 DESC, 2 LIMIT 5)
     UNION ALL
-(SELECT 'finished', date_trunc('month', finished)::text, COUNT(*) FROM facetingtestsuite.documents GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 5)
+(SELECT 'finished', date_trunc('month', finished)::text, COUNT(*) FROM facetingtestsuite.documents GROUP BY 1, 2 ORDER BY 3 DESC, 2 LIMIT 5)
     UNION ALL
-(SELECT 'category_id', category_id::text, COUNT(*) FROM facetingtestsuite.documents GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 5)
+(SELECT 'category_id', category_id::text, COUNT(*) FROM facetingtestsuite.documents GROUP BY 1, 2 ORDER BY 3 DESC, 2 LIMIT 5)
     UNION ALL
-(SELECT 'type', type::text, COUNT(*) FROM facetingtestsuite.documents GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 5)
+(SELECT 'type', type::text, COUNT(*) FROM facetingtestsuite.documents GROUP BY 1, 2 ORDER BY 3 DESC, 2 LIMIT 5)
     UNION ALL
-(SELECT 'size', width_bucket(size, array[0,1000,5000,10000,50000,100000,500000])::text, COUNT(*) FROM facetingtestsuite.documents GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 5);
+(SELECT 'size', width_bucket(size, array[0,1000,5000,10000,50000,100000,500000])::text, COUNT(*) FROM facetingtestsuite.documents GROUP BY 1, 2 ORDER BY 3 DESC, 2 LIMIT 5);
 
 SELECT * FROM faceting.count_results('facetingtestsuite.documents'::regclass,
                                      filters => array[row('category_id', 24)]::faceting.facet_filter[]);
