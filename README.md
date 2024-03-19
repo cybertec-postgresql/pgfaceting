@@ -5,7 +5,7 @@ PostgreSQL extension to quickly calculate facet counts using inverted index buil
 [pg_roaringbitmap](https://github.com/ChenHuajun/pg_roaringbitmap) to be installed.
 
 Faceting means counting number occurrences of each value in a result set for a set of attributes. Typical example of
-faceting is be a web shop where you can see how many items are remaining after filtering your search by red, green or
+faceting is a web shop where you can see how many items are remaining after filtering your search by red, green or
 blue, and how many when filtering by size small, medium or large.
 
 Work on this project has been sponsored by [Xenit](https://xenit.eu/).
